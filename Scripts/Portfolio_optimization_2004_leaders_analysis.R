@@ -683,7 +683,6 @@ p1 <- ggplot(wealth_long %>% filter(Real_Nominal == "Nominal"),
   )
 
 print(p1)
-ggsave("wealth_nominal.png", p1, width = 13, height = 7, dpi = 300)
 
 # Plot 2: Real Wealth Evolution (CPI-Adjusted)
 p2 <- ggplot(wealth_long %>% filter(Real_Nominal == "Real (CPI-Adjusted)"),
@@ -731,7 +730,6 @@ p2 <- ggplot(wealth_long %>% filter(Real_Nominal == "Real (CPI-Adjusted)"),
   )
 
 print(p2)
-ggsave("wealth_real_cpi_adjusted.png", p2, width = 13, height = 7, dpi = 300)
 
 cat("✓ Visualizations saved (PNG format, 300 DPI)\n\n")
 
