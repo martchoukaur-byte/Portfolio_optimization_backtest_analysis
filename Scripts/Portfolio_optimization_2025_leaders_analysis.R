@@ -828,7 +828,7 @@ write.csv(wealth_data, paste0(output_prefix, "wealth_evolution_timeseries.csv"),
 cat("✓ Wealth Time Series →", paste0(output_prefix, "wealth_evolution_timeseries.csv\n"))
 
 gfsave(paste0(output_prefix, "wealth_nominal.png"), p1, width = 13, height = 7, dpi = 300)
-gfsave(paste0(output_prefix, "wealth_real_cpi_adjusted.png"), p2, width = 13, height = 7, dpi = 300)
+ggsave(paste0(output_prefix, "wealth_real_cpi_adjusted.png"), p2, width = 13, height = 7, dpi = 300)
 
 cat("\n")
 cat(paste(rep("=", 70), collapse = ""), "\n")
