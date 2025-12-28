@@ -646,102 +646,6 @@ wealth_long <- wealth_data %>%
   filter(!is.na(Type)) %>%
   arrange(Date)
 
-# Plot 1: Nominal Wealth Evolution
-p1 <- ggplot(wealth_long %>% filter(Real_Nominal == "Nominal"),
-             aes(x = Date, y = Wealth,
-                 color = paste(Portfolio_Type, Type, sep = "_"),
-                 linetype = Type)) +
-  geom_line(size = 1.1) +
-  scale_linetype_manual(
-    values = c("Gross" = "solid", "Net" = "dashed", "Benchmark" = "dotted"),
-    name = "Strategy Type"
-  ) +
-  scale_color_manual(
-    values = c(
-      "GMVP_Gross" = "#E41A1C", "GMVP_Net" = "#FF6B6B",
-      "MV_Gross" = "#377EB8", "MV_Net" = "#6FB3E8",
-      "S&P 500_Benchmark" = "#2CA02C"
-    ),
-    name = "Strategy",
-    labels = c(
-      "GMVP_Gross" = "GMVP Gross",
-      "GMVP_Net" = "GMVP Net",
-      "MV_Gross" = "MV Gross",
-      "MV_Net" = "MV Net",
-      "S&P 500_Benchmark" = "S&P 500"
-    )
-  ) +
-  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
-  labs(
-    title = "Wealth Evolution: Optimized Portfolios vs S&P 500 Benchmark",
-    subtitle = "Nominal Values | Nov 2004 - Nov 2025 | Initial Investment = $1",
-    x = "Year",
-    y = "Cumulative Wealth",
-    caption = "GMVP = Global Minimum Variance | MV = Mean-Variance Efficient | Net = After 10bps transaction costs"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(size = 11, color = "gray40"),
-    legend.position = "bottom",
-    legend.text = element_text(size = 9),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
-    axis.title = element_text(size = 11),
-    panel.grid.major = element_line(color = "gray90", size = 0.3)
-  )
-
-print(p1)
-ggsave("wealth_nominal.png", p1, width = 13, height = 7, dpi = 300)
-
-# Plot 2: Real Wealth Evolution (CPI-Adjusted)
-p2 <- ggplot(wealth_long %>% filter(Real_Nominal == "Real (CPI-Adjusted)"),
-             aes(x = Date, y = Wealth,
-                 color = paste(Portfolio_Type, Type, sep = "_"),
-                 linetype = Type)) +
-  geom_line(size = 1.1) +
-  scale_linetype_manual(
-    values = c("Gross" = "solid", "Net" = "dashed", "Benchmark" = "dotted"),
-    name = "Strategy Type"
-  ) +
-  scale_color_manual(
-    values = c(
-      "GMVP_Gross" = "#E41A1C", "GMVP_Net" = "#FF6B6B",
-      "MV_Gross" = "#377EB8", "MV_Net" = "#6FB3E8",
-      "S&P 500_Benchmark" = "#2CA02C"
-    ),
-    name = "Strategy",
-    labels = c(
-      "GMVP_Gross" = "GMVP Gross",
-      "GMVP_Net" = "GMVP Net",
-      "MV_Gross" = "MV Gross",
-      "MV_Net" = "MV Net",
-      "S&P 500_Benchmark" = "S&P 500"
-    )
-  ) +
-  scale_x_date(date_breaks = "2 years", date_labels = "%Y") +
-  scale_y_continuous(breaks = scales::pretty_breaks(n = 8)) +
-  labs(
-    title = "Real Wealth Evolution: Optimized Portfolios vs S&P 500 Benchmark",
-    subtitle = "CPI-Adjusted to Nov 2004 Dollars | Nov 2004 - Nov 2024",
-    x = "Year",
-    y = "Cumulative Wealth (Nov 2004 $)",
-    caption = "Data: Nov 2004 - Nov 2024 | Deflated by Bureau of Labor Statistics CPI-U"
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(size = 11, color = "gray40"),
-    legend.position = "bottom",
-    legend.text = element_text(size = 9),
-    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
-    axis.title = element_text(size = 11),
-    panel.grid.major = element_line(color = "gray90", size = 0.3)
-  )
-
-print(p2)
-ggsave("wealth_real_cpi_adjusted.png", p2, width = 13, height = 7, dpi = 300)
-
 cat("✓ Visualizations saved (PNG format, 300 DPI)\n\n")
 
 # ============================================================
@@ -828,9 +732,6 @@ cat("✓ Summary Statistics →", paste0(output_prefix, "final_summary_statistic
 write.csv(wealth_data, paste0(output_prefix, "wealth_evolution_timeseries.csv"), row.names = FALSE)
 cat("✓ Wealth Time Series →", paste0(output_prefix, "wealth_evolution_timeseries.csv\n"))
 
-ggsave(paste0(output_prefix, "wealth_nominal.png"), p1, width = 13, height = 7, dpi = 300)
-ggsave(paste0(output_prefix, "wealth_real_cpi_adjusted.png"), p2, width = 13, height = 7, dpi = 300)
-
 cat("\n")
 cat(paste(rep("=", 70), collapse = ""), "\n")
 cat("✓ ANALYSIS COMPLETE\n")
@@ -842,4 +743,3 @@ cat("Period: Nov 2004 - Nov 2025 (21 years)\n")
 cat("Nominal results: Full period through Nov 2025\n")
 cat("Real results: Through Nov 2024 (CPI data limitation)\n")
 cat(paste(rep("=", 70), collapse = ""), "\n")
-
