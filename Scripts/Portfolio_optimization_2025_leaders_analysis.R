@@ -34,19 +34,22 @@
 # about these companies' futures.
 #
 # ============================================================
+
 rm(list = ls())
 # ============================================================
-# SECTION 1: ENVIRONMENT SETUP
+# PORTFOLIO OPTIMIZATION & BACKTESTING ANALYSIS (2004-2025)
+# Retrospective Analysis: 2025 Market Leaders Backtested to 2004
 # ============================================================
 
 packages <- c(
-  "quantmod",           # Financial data retrieval
-  "dplyr",              # Data manipulation
-  "tidyr",              # Data reshaping
-  "zoo",                # Time series handling
-  "ggplot2",            # Visualization
-  "PerformanceAnalytics",# Financial metrics
-  "lubridate"           # Date operations
+  "quantmod",
+  "dplyr",
+  "tidyr",
+  "zoo",
+  "ggplot2",
+  "PerformanceAnalytics",
+  "lubridate",
+  "quadprog"
 )
 
 for (pkg in packages) {
@@ -60,19 +63,7 @@ for (pkg in packages) {
 # SECTION 2: UTILITY FUNCTIONS
 # ============================================================
 
-#' Load Monthly Stock Returns
-#'
-#' @param ticker Character string for stock ticker
-#' @param from Start date (YYYY-MM-DD format)
-#' @param to End date (YYYY-MM-DD format)
-#'
-#' @return Data frame with OHLCV data and computed returns
-#'
-#' @details Retrieves historical pricing data and calculates
-#' monthly percentage returns, excluding the first NA observation.
-
 load_stock_monthly <- function(ticker, from = "1999-11-01", to = "2025-11-02") {
-  
   data <- getSymbols(
     ticker,
     from = from,
@@ -87,68 +78,59 @@ load_stock_monthly <- function(ticker, from = "1999-11-01", to = "2025-11-02") {
   rownames(df) <- NULL
   
   df <- df %>%
-    select(date, open, high, low, close, adjusted_close, volume) %>%
-    mutate(
-      returns = (adjusted_close / lag(adjusted_close) - 1) * 100,
+    dplyr::select(date, open, high, low, close, adjusted_close, volume) %>%
+    dplyr::mutate(
+      returns = (adjusted_close / dplyr::lag(adjusted_close) - 1) * 100,
       compound_growth = adjusted_close / adjusted_close[1]
     )
   
   return(df)
 }
 
-#' Geometric Mean of Returns
-#'
-#' @param x Numeric vector of returns (in %)
-#'
-#' @return Single numeric value representing geometric mean return (%)
-#'
-#' @details Computes compound annual growth rate (CAGR) from monthly
-#' returns, properly handling NA values.
-
 geometric_mean_returns <- function(x) {
   x_clean <- na.omit(x)
   n <- length(x_clean)
+  if (n == 0) return(NA_real_)
   ((prod(1 + x_clean / 100)) ^ (1 / n) - 1)
 }
-geometric_mean_rf <- function(rf_rates) {
+
+# ✅ NOUVELLE FONCTION: geometric_mean_rf avec diagnostic
+geometric_mean_rf <- function(rf_rates, verbose = TRUE) {
   rf_clean <- na.omit(rf_rates)
-  n <- length(rf_clean)
-  if (n == 0) return(NA_real_)
-  ((prod(1 + rf_clean / 100)) ^ (1 / n) - 1) * 100
+  n_original <- length(rf_rates)
+  n_clean <- length(rf_clean)
+  n_dropped <- n_original - n_clean
+  
+  if (verbose && n_dropped > 0) {
+    cat(sprintf("  [RF] Dropped %d NAs, using n=%d observations\n",
+                n_dropped, n_clean))
+  }
+  
+  if (n_clean == 0) {
+    if (verbose) cat("  [RF] ERROR: No valid RF observations!\n")
+    return(NA_real_)
+  }
+  
+  result <- ((prod(1 + rf_clean / 100)) ^ (1 / n_clean) - 1) * 100
+  return(result)
 }
 
-#' Global Minimum Variance Portfolio (GMVP)
-#'
-#' @param window_data Matrix of returns
-#'
-#' @return List containing optimal weights and portfolio volatility
-#'
-#' @details Solves for the minimum-variance portfolio using the
-#' closed-form solution: w = Σ⁻¹·1 / (1ᵀ·Σ⁻¹·1)
-
 calculate_gmvp_weights <- function(window_data, min_weight = 0, max_weight = 1) {
-  
-  library(quadprog)
-  
   sigma_mat <- cov(window_data)
   n_assets <- ncol(window_data)
   
-  # Paramètres pour quadprog
   D <- 2 * sigma_mat
   d <- rep(0, n_assets)
   
-  # Contrainte d'égalité: sum(w) = 1
   A_eq <- matrix(1, nrow = 1, ncol = n_assets)
   b_eq <- 1
   
-  # Contraintes d'inégalité: min_weight <= w_i <= max_weight
   A_in <- rbind(
-    diag(n_assets),                    # w_i >= min_weight
-    -diag(n_assets)                    # w_i <= max_weight
+    diag(n_assets),
+    -diag(n_assets)
   )
   b_in <- c(rep(min_weight, n_assets), rep(-max_weight, n_assets))
   
-  # Résoudre le problème d'optimisation quadratique
   result <- quadprog::solve.QP(
     Dmat = D,
     dvec = d,
@@ -169,26 +151,21 @@ calculate_mv_portfolio <- function(window_data,
                                    min_weight = 0, 
                                    max_weight = 1) {
   
-  library(quadprog)
-  
   sigma_mat <- cov(window_data)
   n_assets <- ncol(window_data)
   
-  # Rendement cible = MOYENNE CAPM
   target_return <- mean(expected_returns)
   
   D <- 2 * sigma_mat
   d <- rep(0, n_assets)
   
-  # DEUX contraintes d'égalité
   A_eq <- rbind(
-    matrix(1, nrow = 1, ncol = n_assets),      # sum(w) = 1
-    matrix(expected_returns, nrow = 1)         # E[R]^T w = target
+    matrix(1, nrow = 1, ncol = n_assets),
+    matrix(expected_returns, nrow = 1)
   )
   
   b_eq <- c(1, target_return)
   
-  # Contraintes d'inégalité (poids min/max)
   A_in <- rbind(
     diag(n_assets),
     -diag(n_assets)
@@ -199,13 +176,12 @@ calculate_mv_portfolio <- function(window_data,
     rep(-max_weight, n_assets)
   )
   
-  # Résoudre
   result <- quadprog::solve.QP(
     Dmat = D,
     dvec = d,
     Amat = t(rbind(A_eq, A_in)),
     bvec = c(b_eq, b_in),
-    meq = 2  # 2 égalités
+    meq = 2
   )
   
   mv_weights <- result$solution
@@ -221,14 +197,12 @@ calculate_mv_portfolio <- function(window_data,
   ))
 }
 
-
 # ============================================================
 # SECTION 3: DATA ACQUISITION & PREPARATION
 # ============================================================
 
 cat("\n--- DATA ACQUISITION ---\n")
 
-# Load individual stocks
 tickers <- c("NVDA", "MSFT", "AAPL", "AMZN", "BRK-A")
 
 cat("Loading monthly stock data for:", paste(tickers, collapse = ", "), "\n")
@@ -236,14 +210,12 @@ cat("Loading monthly stock data for:", paste(tickers, collapse = ", "), "\n")
 stock_list <- lapply(tickers, load_stock_monthly)
 names(stock_list) <- tickers
 
-# Consolidate into single dataframe
 stock_list_tagged <- lapply(seq_along(stock_list), function(i) {
-  stock_list[[i]] %>% mutate(stock = names(stock_list)[i])
+  stock_list[[i]] %>% dplyr::mutate(stock = names(stock_list)[i])
 })
 
-data_all <- bind_rows(stock_list_tagged)
+data_all <- dplyr::bind_rows(stock_list_tagged)
 
-# Load S&P 500 benchmark
 cat("Loading S&P 500 (SPY) benchmark data...\n")
 
 spy_data <- load_stock_monthly("SPY")
@@ -251,10 +223,9 @@ names(spy_data)[names(spy_data) == "adjusted_close"] <- "spy_close"
 names(spy_data)[names(spy_data) == "returns"] <- "spy_returns"
 names(spy_data)[names(spy_data) == "compound_growth"] <- "spy_compound_growth"
 
-# Load risk-free rate (3-month US Treasury)
 cat("Loading risk-free rate (3M Treasury)...\n")
 
-rf_data <- getSymbols(
+rf_data_raw <- getSymbols(
   "DGS3MO",
   src = "FRED",
   from = "1999-11-01",
@@ -263,30 +234,24 @@ rf_data <- getSymbols(
 ) %>%
   as.data.frame()
 
-rf_data$date <- as.Date(rownames(rf_data))
-colnames(rf_data) <- c("rf_rate", "date")
-rownames(rf_data) <- NULL
+rf_data_raw$date <- as.Date(rownames(rf_data_raw))
+colnames(rf_data_raw) <- c("rf_rate", "date")
+rownames(rf_data_raw) <- NULL
 
-rf_data <- rf_data %>%
-  mutate(
+# ✅ CORRECTION #1: Timing RF (fin de mois, pas début)
+# ✅ CORRECTION #2: Exclure NAs AVANT sélection
+rf_data <- rf_data_raw %>%
+  dplyr::mutate(
     rf_rate = as.numeric(as.character(rf_rate)),
     yearmonth = format(date, "%Y-%m")
   ) %>%
-  group_by(yearmonth) %>%
-  filter(date == min(date)) %>%
-  ungroup() %>%
-  select(date, rf_rate)
+  dplyr::filter(!is.na(rf_rate)) %>%
+  dplyr::group_by(yearmonth) %>%
+  dplyr::filter(date == max(date)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(date, rf_rate) %>%
+  dplyr::arrange(date)
 
-# Handle missing November 2025 data
-last_date <- max(rf_data$date)
-target_date <- as.Date("2025-11-01")
-
-if (last_date < target_date) {
-  new_row <- data.frame(date = target_date, rf_rate = NA)
-  rf_data <- bind_rows(rf_data, new_row)
-}
-
-# Load Consumer Price Index for inflation adjustment
 cat("Loading CPI data for inflation adjustment (through Nov 2024)...\n")
 
 cpi_data <- getSymbols(
@@ -303,33 +268,67 @@ colnames(cpi_data) <- c("cpi", "date")
 rownames(cpi_data) <- NULL
 
 # ============================================================
-# SECTION 4: DATA STRUCTURING
+# SECTION 4: DATA STRUCTURING + ALIGNMENT CHECK
 # ============================================================
 
 cat("Structuring return matrices...\n")
 
-# Create wide-format returns matrix
 data_wide <- data_all %>%
-  select(date, stock, returns) %>%
-  pivot_wider(names_from = stock, values_from = returns) %>%
-  arrange(date) %>%
-  slice(-1)  # Remove first NA
+  dplyr::select(date, stock, returns) %>%
+  tidyr::pivot_wider(names_from = stock, values_from = returns) %>%
+  dplyr::arrange(date) %>%
+  dplyr::slice(-1)
 
 returns_matrix_full <- data_wide %>%
-  select(-date) %>%
+  dplyr::select(-date) %>%
   as.matrix()
 
-# Subset for 150-month period analysis
 n_150 <- 150
 returns_matrix_150 <- returns_matrix_full[1:n_150, ]
 
-# Align S&P 500 returns
 spy_returns_full <- spy_data$spy_returns[-1]
 spy_returns_150 <- spy_returns_full[1:n_150]
 
 cat("✓ Data loaded and structured\n")
-cat("  Full period: ", nrow(returns_matrix_full), " months\n")
-cat("  Analysis begins: Nov 2004 | Analysis ends: Nov 2025\n\n")
+cat("  Full period months (stocks): ", nrow(returns_matrix_full), "\n")
+cat("  Returns start: ", as.character(data_wide$date[1]), 
+    " | Returns end: ", as.character(tail(data_wide$date, 1)), "\n")
+cat("  RF start: ", as.character(min(rf_data$date)), 
+    " | RF end: ", as.character(max(rf_data$date)), "\n\n")
+
+# ✅ CORRECTION #3: DATA QUALITY CHECK RF vs RETURNS
+cat("--- DATA QUALITY CHECK: RF ALIGNMENT ---\n")
+
+n_returns_months <- nrow(returns_matrix_full)
+n_rf_total <- nrow(rf_data)
+n_rf_valid <- sum(!is.na(rf_data$rf_rate))
+
+cat("Returns months available: ", n_returns_months, "\n")
+cat("RF rows (monthly):        ", n_rf_total, "\n")
+cat("RF valid rows:            ", n_rf_valid, "\n")
+cat("RF coverage:              ", 
+    round(min(1, n_rf_valid / n_returns_months) * 100, 1), "%\n\n")
+
+if (n_rf_total < n_returns_months) {
+  stop(paste0(
+    "CRITICAL: RF dataset is shorter than returns dataset.\n",
+    "RF rows: ", n_rf_total, " < Returns months: ", n_returns_months, "\n",
+    "Adjust RF date range or shorten analysis period."
+  ))
+}
+
+rf_check <- rf_data %>%
+  dplyr::mutate(ym = format(date, "%Y-%m")) %>%
+  dplyr::group_by(ym) %>%
+  dplyr::summarise(n_per_month = dplyr::n(), .groups = "drop")
+
+duplicates <- rf_check %>% dplyr::filter(n_per_month > 1)
+if (nrow(duplicates) > 0) {
+  warning("Some months have multiple RF observations after aggregation.")
+  print(duplicates)
+}
+
+cat("✓ RF alignment check passed\n\n")
 
 # ============================================================
 # SECTION 5: CAPM ANALYSIS
@@ -337,7 +336,6 @@ cat("  Analysis begins: Nov 2004 | Analysis ends: Nov 2025\n\n")
 
 cat("--- CAPM ANALYSIS ---\n")
 
-# Calculate betas (systematic risk)
 betas_full <- apply(returns_matrix_full, 2, function(x) {
   cov(x, spy_returns_full, use = "complete.obs") /
     var(spy_returns_full, na.rm = TRUE)
@@ -348,18 +346,19 @@ betas_150 <- apply(returns_matrix_150, 2, function(x) {
     var(spy_returns_150, na.rm = TRUE)
 })
 
-# Calculate annualized S&P 500 expected return
 mean_spy_monthly_full <- geometric_mean_returns(spy_returns_full)
 mean_spy_annual_full <- ((1 + mean_spy_monthly_full) ^ 12 - 1) * 100
 
 mean_spy_monthly_150 <- geometric_mean_returns(spy_returns_150)
 mean_spy_annual_150 <- ((1 + mean_spy_monthly_150) ^ 12 - 1) * 100
 
-# Risk-free rates (average over periods)
-mean_rf_full <- geometric_mean_rf(rf_data$rf_rate)
-mean_rf_150 <- geometric_mean_rf(rf_data$rf_rate[1:150])
+# ✅ CORRECTION #5: Appel avec verbose
+cat("Calculating RF for full period:\n")
+mean_rf_full <- geometric_mean_rf(rf_data$rf_rate[1:n_returns_months], verbose = TRUE)
 
-# CAPM: E(Ri) = Rf + βi × (E(Rm) - Rf)
+cat("Calculating RF for first 150 months:\n")
+mean_rf_150 <- geometric_mean_rf(rf_data$rf_rate[1:n_150], verbose = TRUE)
+
 expected_returns_full <- mean_rf_full + betas_full * (mean_spy_annual_full - mean_rf_full)
 expected_returns_150 <- mean_rf_150 + betas_150 * (mean_spy_annual_150 - mean_rf_150)
 
@@ -381,16 +380,16 @@ cat("\n")
 
 cat("--- ROLLING-WINDOW PORTFOLIO OPTIMIZATION ---\n")
 
-initial_periods <- 48  # 4-year inception period
+initial_periods <- 48
 periods_per_year <- 12
 n_years <- 22
-transaction_cost_rate <- 0.001  # 10 basis points
+transaction_cost_rate <- 0.001
 
 cat("Parameters:\n")
 cat("  Inception period: ", initial_periods, " months (4 years)\n")
 cat("  Rebalancing: Annual\n")
 cat("  Transaction cost: ", transaction_cost_rate * 100, "%\n")
-cat("  Analysis horizon: ", n_years, " years\n\n")
+cat("  Max analysis horizon: ", n_years, " years\n\n")
 
 optimization_results <- list()
 
@@ -402,27 +401,37 @@ for (year in 1:n_years) {
     break
   }
   
-  window_data <- returns_matrix_full[1:end_period, ]
+  # ✅ CORRECTION #4: Vérifier RF data disponible
+  if (end_period > nrow(rf_data)) {
+    stop(sprintf("Year %d: RF data ends at row %d but need row %d\n",
+                 year, nrow(rf_data), end_period))
+  }
   
-  # ✅ Calculer les rendements CAPM pour cette fenêtre
+  window_data <- returns_matrix_full[1:end_period, ]
+  spy_window <- spy_returns_full[1:end_period]
+  rf_subset <- rf_data$rf_rate[1:end_period]
+  
+  n_rf_available <- sum(!is.na(rf_subset))
+  rf_coverage_pct <- n_rf_available / end_period * 100
+  
+  if (rf_coverage_pct < 95) {
+    cat(sprintf("  [Year %d] RF coverage = %.1f%% (%d/%d months)\n",
+                year, rf_coverage_pct, n_rf_available, end_period))
+  }
+  
   betas_window <- apply(window_data, 2, function(x) {
-    cov(x, spy_returns_full[1:end_period], use = "complete.obs") /
-      var(spy_returns_full[1:end_period], na.rm = TRUE)
+    cov(x, spy_window, use = "complete.obs") /
+      var(spy_window, na.rm = TRUE)
   })
   
-  mean_spy_window <- geometric_mean_returns(spy_returns_full[1:end_period])
+  mean_spy_window <- geometric_mean_returns(spy_window)
   mean_spy_annual_window <- ((1 + mean_spy_window) ^ 12 - 1) * 100
-  mean_rf_window <- geometric_mean_rf(rf_data$rf_rate[1:end_period])
+  mean_rf_window <- geometric_mean_rf(rf_subset, verbose = (year == 1))
   
-  # ✅ Rendements CAPM pour cette fenêtre
-  expected_returns_window <- mean_rf_window + 
-    betas_window * 
-    (mean_spy_annual_window - mean_rf_window)
+  expected_returns_window <- mean_rf_window +
+    betas_window * (mean_spy_annual_window - mean_rf_window)
   
-  # Calculer les portefeuilles
   gmvp <- calculate_gmvp_weights(window_data)
-  
-  # ✅ Passer les rendements CAPM à MV !
   mv <- calculate_mv_portfolio(window_data, expected_returns_window)
   
   optimization_results[[year]] <- list(
@@ -430,12 +439,11 @@ for (year in 1:n_years) {
     Periods = end_period,
     GMVP_weights = gmvp$weights,
     GMVP_vol = gmvp$volatility,
-    MV_weights = mv$weights,          # ← Différent de GMVP !
+    MV_weights = mv$weights,
     MV_vol = mv$volatility,
     MV_target_return = mv$target
   )
 }
-
 
 cat("✓ Optimization complete (", length(optimization_results), " annual rebalances)\n\n")
 
@@ -445,7 +453,6 @@ cat("✓ Optimization complete (", length(optimization_results), " annual rebala
 
 cat("--- OUT-OF-SAMPLE BACKTESTING ---\n")
 
-# Initialize wealth tracking
 wealth_data <- data.frame(
   Year_Index = 0,
   Wealth_GMVP_Net = 1,
@@ -461,7 +468,6 @@ wealth_data <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Cumulative wealth variables
 wealth_gmvp_net <- 1
 wealth_gmvp_gross <- 1
 wealth_mv_net <- 1
@@ -476,8 +482,7 @@ wealth_sp500_real <- 1
 
 performance_summary <- list()
 
-# Annual backtesting loop
-for (year in 1:(length(optimization_results))) {
+for (year in 1:length(optimization_results)) {
   
   initial_period <- initial_periods + year * periods_per_year
   end_period <- initial_periods + ((year + 1) * periods_per_year) - 1
@@ -485,13 +490,11 @@ for (year in 1:(length(optimization_results))) {
   if (end_period > nrow(returns_matrix_full)) {
     break
   }
-  # Extract monthly returns for the rebalancing year
+  
   monthly_returns <- returns_matrix_full[initial_period:end_period, ]
   spy_returns_year <- spy_returns_full[initial_period:end_period]
   
-  # --- TURNOVER & TRANSACTION COSTS ---
   if (year == 1) {
-    # First year: assume equal-weight starting portfolio
     equal_weight <- rep(
       1 / length(optimization_results[[year]]$GMVP_weights),
       length(optimization_results[[year]]$GMVP_weights)
@@ -499,7 +502,6 @@ for (year in 1:(length(optimization_results))) {
     turnover_gmvp <- sum(abs(optimization_results[[year]]$GMVP_weights - equal_weight))
     turnover_mv <- sum(abs(optimization_results[[year]]$MV_weights - equal_weight))
   } else {
-    # Subsequent years: compare to previous portfolio
     turnover_gmvp <- sum(abs(optimization_results[[year]]$GMVP_weights -
                                optimization_results[[year - 1]]$GMVP_weights))
     turnover_mv <- sum(abs(optimization_results[[year]]$MV_weights -
@@ -509,23 +511,17 @@ for (year in 1:(length(optimization_results))) {
   transaction_costs_gmvp <- turnover_gmvp * transaction_cost_rate * 100
   transaction_costs_mv <- turnover_mv * transaction_cost_rate * 100
   
-  # --- PORTFOLIO RETURNS ---
-  
   portfolio_return_gmvp <- rowSums(sweep(monthly_returns, 2,
                                          optimization_results[[year]]$GMVP_weights, "*"))
   portfolio_return_mv <- rowSums(sweep(monthly_returns, 2,
                                        optimization_results[[year]]$MV_weights, "*"))
   
-  # Annual compound returns (gross of costs)
   annual_return_gmvp_gross <- (prod(1 + portfolio_return_gmvp / 100, na.rm = TRUE) - 1) * 100
   annual_return_mv_gross <- (prod(1 + portfolio_return_mv / 100, na.rm = TRUE) - 1) * 100
   annual_return_sp500_gross <- (prod(1 + spy_returns_year / 100, na.rm = TRUE) - 1) * 100
   
-  # Net of transaction costs
   annual_return_gmvp <- annual_return_gmvp_gross - transaction_costs_gmvp
   annual_return_mv <- annual_return_mv_gross - transaction_costs_mv
-  
-  # --- WEALTH ACCUMULATION ---
   
   wealth_gmvp_net <- wealth_gmvp_net * (1 + annual_return_gmvp / 100)
   wealth_gmvp_gross <- wealth_gmvp_gross * (1 + annual_return_gmvp_gross / 100)
@@ -533,10 +529,7 @@ for (year in 1:(length(optimization_results))) {
   wealth_mv_gross <- wealth_mv_gross * (1 + annual_return_mv_gross / 100)
   wealth_sp500 <- wealth_sp500 * (1 + annual_return_sp500_gross / 100)
   
-  # --- INFLATION ADJUSTMENT ---
-  
   if (year <= 20) {
-    # CPI data available through Nov 2024 (year 20)
     cpi_ratio <- cpi_data$cpi[year * periods_per_year] / cpi_data$cpi[1]
     
     wealth_gmvp_net_real <- wealth_gmvp_net / cpi_ratio
@@ -545,7 +538,6 @@ for (year in 1:(length(optimization_results))) {
     wealth_mv_gross_real <- wealth_mv_gross / cpi_ratio
     wealth_sp500_real <- wealth_sp500 / cpi_ratio
   } else {
-    # CPI data unavailable after Nov 2024 (year 21+)
     wealth_gmvp_net_real <- NA
     wealth_gmvp_gross_real <- NA
     wealth_mv_net_real <- NA
@@ -553,20 +545,18 @@ for (year in 1:(length(optimization_results))) {
     wealth_sp500_real <- NA
   }
   
-  # --- RISK METRICS ---
-  
   vol_gmvp <- sd(portfolio_return_gmvp, na.rm = TRUE) * sqrt(12)
   vol_mv <- sd(portfolio_return_mv, na.rm = TRUE) * sqrt(12)
   vol_sp500 <- sd(spy_returns_year, na.rm = TRUE) * sqrt(12)
   
-  rf_subset <- rf_data$rf_rate[initial_period:end_period]
-  rf_year <- geometric_mean_rf(rf_data$rf_rate[initial_period:end_period])
+  rf_year <- geometric_mean_rf(
+    rf_data$rf_rate[initial_period:end_period],
+    verbose = FALSE
+  )
   
   sharpe_gmvp <- (annual_return_gmvp - rf_year) / vol_gmvp
   sharpe_mv <- (annual_return_mv - rf_year) / vol_mv
   sharpe_sp500 <- (annual_return_sp500_gross - rf_year) / vol_sp500
-  
-  # --- STORE RESULTS ---
   
   performance_summary[[year]] <- list(
     Year_Index = year,
@@ -614,41 +604,39 @@ cat("\n")
 # SECTION 8: VISUALIZATION
 # ============================================================
 
-
 cat("--- GENERATING VISUALIZATIONS ---\n")
 
-start_date <- ymd("2004-11-01")
+start_date <- lubridate::ymd("2004-11-01")
 
 wealth_long <- wealth_data %>%
-  mutate(Date = start_date + years(Year_Index)) %>%
-  pivot_longer(
+  dplyr::mutate(Date = start_date + lubridate::years(Year_Index)) %>%
+  tidyr::pivot_longer(
     cols = contains("Wealth"),
     names_to = "Portfolio",
     values_to = "Wealth"
   ) %>%
-  mutate(
-    Type = case_when(
+  dplyr::mutate(
+    Type = dplyr::case_when(
       grepl("_Net", Portfolio) ~ "Net",
       grepl("_Gross", Portfolio) ~ "Gross",
       grepl("SP500", Portfolio) ~ "Benchmark",
       TRUE ~ NA_character_
     ),
-    Portfolio_Type = case_when(
+    Portfolio_Type = dplyr::case_when(
       grepl("GMVP", Portfolio) ~ "GMVP",
       grepl("MV", Portfolio) ~ "MV",
       grepl("SP500", Portfolio) ~ "S&P 500",
       TRUE ~ NA_character_
     ),
-    Real_Nominal = case_when(
+    Real_Nominal = dplyr::case_when(
       grepl("_Real", Portfolio) ~ "Real (CPI-Adjusted)",
       TRUE ~ "Nominal"
     )
   ) %>%
-  filter(!is.na(Type)) %>%
-  arrange(Date)
+  dplyr::filter(!is.na(Type)) %>%
+  dplyr::arrange(Date)
 
-# Plot 1: Nominal Wealth Evolution
-p1 <- ggplot(wealth_long %>% filter(Real_Nominal == "Nominal"),
+p1 <- ggplot(wealth_long %>% dplyr::filter(Real_Nominal == "Nominal"),
              aes(x = Date, y = Wealth,
                  color = paste(Portfolio_Type, Type, sep = "_"),
                  linetype = Type)) +
@@ -694,8 +682,7 @@ p1 <- ggplot(wealth_long %>% filter(Real_Nominal == "Nominal"),
 
 print(p1)
 
-# Plot 2: Real Wealth Evolution (CPI-Adjusted)
-p2 <- ggplot(wealth_long %>% filter(Real_Nominal == "Real (CPI-Adjusted)"),
+p2 <- ggplot(wealth_long %>% dplyr::filter(Real_Nominal == "Real (CPI-Adjusted)"),
              aes(x = Date, y = Wealth,
                  color = paste(Portfolio_Type, Type, sep = "_"),
                  linetype = Type)) +
@@ -741,7 +728,7 @@ p2 <- ggplot(wealth_long %>% filter(Real_Nominal == "Real (CPI-Adjusted)"),
 
 print(p2)
 
-cat("✓ Visualizations saved (PNG format, 300 DPI)\n\n")
+cat("✓ Visualizations prepared\n\n")
 
 # ============================================================
 # SECTION 9: COMPREHENSIVE SUMMARY STATISTICS
@@ -770,11 +757,9 @@ final_summary <- data.frame(
   Sharpe_Ratio = NA
 )
 
-# Annualized return (21-year period: Nov 2004 - Nov 2025)
 final_summary$Annualized_Return_Nominal_Pct <-
   (final_summary$Wealth_2025_Nominal ^ (1 / 21) - 1) * 100
 
-# Average metrics from annual performance
 final_summary$Annualized_Volatility_Pct <- c(
   mean(performance_df$Volatility_GMVP_Pct),
   mean(performance_df$Volatility_GMVP_Pct),
@@ -792,7 +777,7 @@ final_summary$Sharpe_Ratio <- c(
 )
 
 final_summary <- final_summary %>%
-  mutate(
+  dplyr::mutate(
     Wealth_2025_Nominal = round(Wealth_2025_Nominal, 2),
     Wealth_2024_Real_Nov2004Dollars = round(Wealth_2024_Real_Nov2004Dollars, 2),
     Annualized_Return_Nominal_Pct = round(Annualized_Return_Nominal_Pct, 2),
@@ -810,7 +795,7 @@ cat("  Sharpe Ratio: Risk-adjusted return (higher is better)\n\n")
 # ============================================================
 # SECTION 10: DATA EXPORT
 # ============================================================
-# Define output prefix
+
 output_prefix <- "portfolio_2025_leaders_"
 
 cat("--- EXPORTING RESULTS ---\n")
@@ -827,8 +812,8 @@ cat("✓ Summary Statistics →", paste0(output_prefix, "final_summary_statistic
 write.csv(wealth_data, paste0(output_prefix, "wealth_evolution_timeseries.csv"), row.names = FALSE)
 cat("✓ Wealth Time Series →", paste0(output_prefix, "wealth_evolution_timeseries.csv\n"))
 
-ggsave(paste0(output_prefix, "wealth_nominal.png"), p1, width = 13, height = 7, dpi = 300)
-ggsave(paste0(output_prefix, "wealth_real_cpi_adjusted.png"), p2, width = 13, height = 7, dpi = 300)
+ggplot2::ggsave(paste0(output_prefix, "wealth_nominal.png"), p1, width = 13, height = 7, dpi = 300)
+ggplot2::ggsave(paste0(output_prefix, "wealth_real_cpi_adjusted.png"), p2, width = 13, height = 7, dpi = 300)
 
 cat("\n")
 cat(paste(rep("=", 70), collapse = ""), "\n")
